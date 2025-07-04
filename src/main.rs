@@ -17,7 +17,7 @@ impl<'a> Bolt<'a> {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::default();
-        let surface = unsafe { instance.create_surface(window) }.unwrap();
+        let surface =  instance.create_surface(window).unwrap();
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -104,6 +104,43 @@ fn main() {
 
     let mut state = pollster::block_on(Bolt::new(&window));
     let window_id = window.id();
+
+    let shader_module = state.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Triangle Shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("triangle.wgsl").into()),
+    });
+
+    let render_pipeline_layout = state.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Triangle Pipeline Layout"),
+        bind_group_layouts: &[],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = state.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Triangle Pipeline"),
+        layout: Some(&render_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader_module,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default()
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader_module,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: state.config.format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default()
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None
+    });
 
     event_loop.run(move |event, elwt| {
         elwt.set_control_flow(ControlFlow::Poll);
