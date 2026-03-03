@@ -3,15 +3,15 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
-use wgpu::SurfaceConfiguration;
+use wgpu::{util::DeviceExt, wgc::device::queue, SurfaceConfiguration};
 
 pub struct Bolt<'a> {
     surface: wgpu::Surface<'a>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: SurfaceConfiguration,
+    start_time: std::time::Instant
 }
-
 impl<'a> Bolt<'a> {
     pub async fn new(window: &'a winit::window::Window) -> Self {
         let size = window.inner_size();
@@ -53,6 +53,7 @@ impl<'a> Bolt<'a> {
             device,
             queue,
             config,
+            start_time: std::time::Instant::now()
         }
     }
 
@@ -110,11 +111,52 @@ fn main() {
         source: wgpu::ShaderSource::Wgsl(include_str!("triangle.wgsl").into()),
     });
 
+    #[repr(C)]
+    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+    struct Uniforms {
+        time: f32,
+    }
+
+    let mut uniforms = Uniforms { time: 0.0 };
+
+    let uniform_buffer = state.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Uniform Buffer"),
+        contents: bytemuck::cast_slice(&[uniforms]),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST
+    });
+
+    let uniform_bind_group_layout =
+        state.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Uniform Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None
+                },
+                count: None,
+            }],
+        });
+
+    let uniform_bind_group = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Uniform Bind Group"),
+        layout: &uniform_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buffer.as_entire_binding(),
+        }],
+    });
+    
+
     let render_pipeline_layout = state.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Triangle Pipeline Layout"),
-        bind_group_layouts: &[],
+        bind_group_layouts: &[ &uniform_bind_group_layout ],
         push_constant_ranges: &[],
     });
+
+    
 
     let pipeline = state.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Triangle Pipeline"),
@@ -145,6 +187,54 @@ fn main() {
     event_loop.run(move |event, elwt| {
         elwt.set_control_flow(ControlFlow::Poll);
 
+
+
+
+        println!("Event: {:?}", event);
+
+        let frame = state.surface.get_current_texture().expect("No frame found");
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
+
+        {
+
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            let elapsed = state.start_time.elapsed().as_secs_f32();
+            uniforms.time = elapsed;
+
+            state.queue.write_buffer(
+                &uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[uniforms]),
+            );
+
+            render_pass.set_pipeline(&pipeline);
+            render_pass.set_bind_group(0, &uniform_bind_group, &[]);
+            render_pass.draw(0..3, 0..1);
+            
+        }
+
+        state.queue.submit(Some(encoder.finish()));
+        frame.present();
+            
+
         match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -155,13 +245,6 @@ fn main() {
                 event: WindowEvent::Resized(size),
                 window_id: id,
             } if id == window_id => state.resize(size),
-
-            Event::WindowEvent {
-                event: WindowEvent::RedrawRequested,
-                window_id: id,
-            } if id == window_id => {
-                state.render().unwrap();
-            }
 
             _ => {}
         }

@@ -165,6 +165,7 @@ dependencies = [
 name = "bolt-wgpu"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "pollster",
  "raw-window-handle 0.5.2",
  "wgpu",
